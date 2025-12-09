@@ -73,6 +73,13 @@ export const authOptions: NextAuthOptions = {
     session: {
         strategy: 'jwt'
     }
+    ,
+    debug: process.env.NEXTAUTH_DEBUG === 'true',
+    logger: {
+        error(code, metadata) {
+            console.error('NextAuth error', code, metadata);
+        }
+    }
 };
 
 // Extended session type
