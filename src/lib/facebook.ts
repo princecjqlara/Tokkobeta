@@ -17,23 +17,42 @@ export async function getFacebookPages(userAccessToken: string): Promise<Faceboo
     return data.data || [];
 }
 
-// Get conversations for a page
+// Get ALL conversations for a page (handles pagination)
 export async function getPageConversations(
     pageId: string,
     pageAccessToken: string,
-    limit: number = 100
+    limit: number = 100,
+    fetchAll: boolean = true // Set to true to fetch ALL conversations
 ): Promise<FacebookConversation[]> {
-    const response = await fetch(
-        `${FACEBOOK_GRAPH_URL}/${pageId}/conversations?fields=id,participants,updated_time&limit=${limit}&access_token=${pageAccessToken}`
-    );
+    const allConversations: FacebookConversation[] = [];
+    let nextUrl: string | null = `${FACEBOOK_GRAPH_URL}/${pageId}/conversations?fields=id,participants,updated_time&limit=${limit}&access_token=${pageAccessToken}`;
 
-    if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error?.message || 'Failed to fetch conversations');
+    while (nextUrl) {
+        const res: Response = await fetch(nextUrl);
+
+        if (!res.ok) {
+            const error = await res.json();
+            throw new Error(error.error?.message || 'Failed to fetch conversations');
+        }
+
+        const responseData: { data?: FacebookConversation[]; paging?: { next?: string } } = await res.json();
+        allConversations.push(...(responseData.data || []));
+
+        // Check if we should continue pagination
+        if (fetchAll && responseData.paging?.next) {
+            nextUrl = responseData.paging.next;
+        } else {
+            nextUrl = null;
+        }
+
+        // Safety limit to prevent infinite loops (max 10000 conversations)
+        if (allConversations.length >= 10000) {
+            console.warn('Hit conversation limit of 10000');
+            break;
+        }
     }
 
-    const data = await response.json();
-    return data.data || [];
+    return allConversations;
 }
 
 // Get user profile from PSID

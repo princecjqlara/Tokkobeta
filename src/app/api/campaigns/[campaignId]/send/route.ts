@@ -90,6 +90,24 @@ export async function POST(
         let failed = 0;
 
         for (const recipient of recipients) {
+            // Check if campaign was cancelled before each send
+            const { data: currentCampaign } = await supabase
+                .from('campaigns')
+                .select('status')
+                .eq('id', campaignId)
+                .single();
+
+            if (currentCampaign?.status === 'cancelled') {
+                // Campaign was cancelled, stop sending
+                return NextResponse.json({
+                    success: true,
+                    sent,
+                    failed,
+                    cancelled: true,
+                    message: 'Campaign was cancelled'
+                });
+            }
+
             // Handle Supabase join which may return array or object
             const contactData = recipient.contacts;
             const contact = Array.isArray(contactData) ? contactData[0] : contactData;
@@ -124,25 +142,35 @@ export async function POST(
                 failed++;
             }
 
-            // Update sent_count
+            // Update sent_count periodically (every 10 messages to reduce DB calls)
+            if ((sent + failed) % 10 === 0) {
+                await supabase
+                    .from('campaigns')
+                    .update({
+                        sent_count: sent,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('id', campaignId);
+            }
+        }
+
+        // Mark campaign as completed (only if not cancelled)
+        const { data: finalStatus } = await supabase
+            .from('campaigns')
+            .select('status')
+            .eq('id', campaignId)
+            .single();
+
+        if (finalStatus?.status !== 'cancelled') {
             await supabase
                 .from('campaigns')
                 .update({
+                    status: 'completed',
                     sent_count: sent,
                     updated_at: new Date().toISOString()
                 })
                 .eq('id', campaignId);
         }
-
-        // Mark campaign as completed
-        await supabase
-            .from('campaigns')
-            .update({
-                status: 'completed',
-                sent_count: sent,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', campaignId);
 
         return NextResponse.json({
             success: true,

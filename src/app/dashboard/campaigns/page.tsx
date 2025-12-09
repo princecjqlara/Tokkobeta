@@ -2,7 +2,7 @@
 
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
-import { Plus, Send, Trash2, Edit2, Users, Clock, CheckCircle, XCircle, MessageSquare } from 'lucide-react';
+import { Plus, Send, Trash2, Users, Clock, CheckCircle, XCircle, MessageSquare, StopCircle } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import Modal from '@/components/Modal';
 import { Campaign, Page, Contact, PaginatedResponse } from '@/types';
@@ -32,6 +32,7 @@ export default function CampaignsPage() {
     const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null);
     const [actionLoading, setActionLoading] = useState(false);
     const [sendingCampaignId, setSendingCampaignId] = useState<string | null>(null);
+    const [cancellingCampaignId, setCancellingCampaignId] = useState<string | null>(null);
 
     // Contacts pagination for modal
     const [contactsPage, setContactsPage] = useState(1);
@@ -147,6 +148,20 @@ export default function CampaignsPage() {
             console.error('Error sending campaign:', error);
         } finally {
             setSendingCampaignId(null);
+        }
+    };
+
+    const handleCancel = async (campaignId: string) => {
+        setCancellingCampaignId(campaignId);
+        try {
+            await fetch(`/api/campaigns/${campaignId}/cancel`, {
+                method: 'POST'
+            });
+            await fetchCampaigns();
+        } catch (error) {
+            console.error('Error cancelling campaign:', error);
+        } finally {
+            setCancellingCampaignId(null);
         }
     };
 
@@ -317,6 +332,25 @@ export default function CampaignsPage() {
                                                 )}
                                             </button>
                                         )}
+                                        {campaign.status === 'sending' && (
+                                            <button
+                                                onClick={() => handleCancel(campaign.id)}
+                                                disabled={cancellingCampaignId === campaign.id}
+                                                className="btn btn-danger py-2 px-4"
+                                            >
+                                                {cancellingCampaignId === campaign.id ? (
+                                                    <>
+                                                        <div className="spinner w-4 h-4"></div>
+                                                        Cancelling...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <StopCircle className="w-4 h-4" />
+                                                        Cancel
+                                                    </>
+                                                )}
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => {
                                                 setEditingCampaign(campaign);
@@ -399,8 +433,8 @@ export default function CampaignsPage() {
                                     key={contact.id}
                                     onClick={() => toggleContactSelection(contact.id)}
                                     className={`w-full flex items-center justify-between p-3 transition-colors ${selectedContactIds.has(contact.id)
-                                            ? 'bg-indigo-600/10'
-                                            : 'hover:bg-[#22222e]'
+                                        ? 'bg-indigo-600/10'
+                                        : 'hover:bg-[#22222e]'
                                         }`}
                                 >
                                     <span className="text-white">{contact.name || 'Unknown'}</span>
