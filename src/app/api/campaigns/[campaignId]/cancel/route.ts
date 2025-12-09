@@ -3,6 +3,13 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getSupabaseAdmin } from '@/lib/supabase';
 
+type CampaignWithPage = {
+    id: string;
+    page_id: string;
+    status: string;
+    pages?: { id: string } | { id: string }[];
+};
+
 // POST /api/campaigns/[campaignId]/cancel - Cancel a sending campaign
 export async function POST(
     request: NextRequest,
@@ -28,7 +35,9 @@ export async function POST(
             .eq('id', campaignId)
             .single();
 
-        if (!campaign) {
+        const typedCampaign = campaign as CampaignWithPage | null;
+
+        if (!typedCampaign) {
             return NextResponse.json(
                 { error: 'Not Found', message: 'Campaign not found' },
                 { status: 404 }
@@ -40,7 +49,7 @@ export async function POST(
             .from('user_pages')
             .select('page_id')
             .eq('user_id', session.user.id)
-            .eq('page_id', campaign.page_id)
+            .eq('page_id', typedCampaign.page_id)
             .single();
 
         if (!userPage) {
@@ -51,7 +60,7 @@ export async function POST(
         }
 
         // Only allow cancelling if campaign is currently sending
-        if (campaign.status !== 'sending') {
+        if (typedCampaign.status !== 'sending') {
             return NextResponse.json(
                 { error: 'Bad Request', message: 'Campaign is not currently sending' },
                 { status: 400 }
