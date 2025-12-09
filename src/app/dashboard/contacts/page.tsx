@@ -11,7 +11,8 @@ import {
     MessageSquare,
     Check,
     X,
-    User
+    User,
+    CheckSquare
 } from 'lucide-react';
 import Pagination from '@/components/Pagination';
 import Modal from '@/components/Modal';
@@ -35,8 +36,10 @@ export default function ContactsPage() {
     const [search, setSearch] = useState('');
     const [selectedTagFilter, setSelectedTagFilter] = useState('');
 
-    // Selection
+    // Selection - now supports "select all" across pagination
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    const [selectAllMode, setSelectAllMode] = useState(false); // true = all matching contacts selected
+    const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set()); // IDs to exclude when selectAllMode is true
 
     // Modals
     const [showAddTagsModal, setShowAddTagsModal] = useState(false);
@@ -109,6 +112,36 @@ export default function ContactsPage() {
         }
     };
 
+    // Fetch all contact IDs for bulk operations when selectAllMode is true
+    const fetchAllContactIds = async (): Promise<string[]> => {
+        if (!selectedPageId) return [];
+
+        try {
+            // Fetch all IDs (without pagination limit)
+            const params = new URLSearchParams({
+                page: '1',
+                pageSize: '10000', // Large number to get all
+                ...(search && { search }),
+                ...(selectedTagFilter && { tagId: selectedTagFilter })
+            });
+
+            const res = await fetch(`/api/pages/${selectedPageId}/contacts?${params}`);
+            const data: PaginatedResponse<Contact> = await res.json();
+
+            let allIds = data.items.map(c => c.id);
+
+            // Remove excluded IDs
+            if (excludedIds.size > 0) {
+                allIds = allIds.filter(id => !excludedIds.has(id));
+            }
+
+            return allIds;
+        } catch (error) {
+            console.error('Error fetching all contact IDs:', error);
+            return [];
+        }
+    };
+
     const handleSync = async () => {
         if (!selectedPageId || syncing) return;
 
@@ -123,40 +156,115 @@ export default function ContactsPage() {
         }
     };
 
-    const handleSelectAll = () => {
-        if (selectedIds.size === contacts.length) {
+    // Get effective selection count
+    const getSelectionCount = () => {
+        if (selectAllMode) {
+            return total - excludedIds.size;
+        }
+        return selectedIds.size;
+    };
+
+    // Check if a contact is selected
+    const isSelected = (id: string) => {
+        if (selectAllMode) {
+            return !excludedIds.has(id);
+        }
+        return selectedIds.has(id);
+    };
+
+    // Handle selecting all on current page
+    const handleSelectAllOnPage = () => {
+        if (selectAllMode) {
+            // If in select all mode, toggle to deselect all
+            setSelectAllMode(false);
+            setExcludedIds(new Set());
             setSelectedIds(new Set());
         } else {
-            setSelectedIds(new Set(contacts.map(c => c.id)));
+            // Check if all on page are selected
+            const allOnPageSelected = contacts.every(c => selectedIds.has(c.id));
+            if (allOnPageSelected) {
+                // Deselect all on this page
+                const newSelected = new Set(selectedIds);
+                contacts.forEach(c => newSelected.delete(c.id));
+                setSelectedIds(newSelected);
+            } else {
+                // Select all on this page
+                const newSelected = new Set(selectedIds);
+                contacts.forEach(c => newSelected.add(c.id));
+                setSelectedIds(newSelected);
+            }
         }
     };
 
+    // Handle "Select All X contacts" button
+    const handleSelectAllAcrossPages = () => {
+        setSelectAllMode(true);
+        setExcludedIds(new Set());
+        setSelectedIds(new Set());
+    };
+
+    // Handle individual contact selection
     const handleSelect = (id: string) => {
-        const newSelected = new Set(selectedIds);
-        if (newSelected.has(id)) {
-            newSelected.delete(id);
+        if (selectAllMode) {
+            // In select all mode, toggle the excluded set
+            const newExcluded = new Set(excludedIds);
+            if (newExcluded.has(id)) {
+                newExcluded.delete(id);
+            } else {
+                newExcluded.add(id);
+            }
+            setExcludedIds(newExcluded);
+
+            // If all are excluded, exit select all mode
+            if (newExcluded.size >= total) {
+                setSelectAllMode(false);
+                setExcludedIds(new Set());
+            }
         } else {
-            newSelected.add(id);
+            const newSelected = new Set(selectedIds);
+            if (newSelected.has(id)) {
+                newSelected.delete(id);
+            } else {
+                newSelected.add(id);
+            }
+            setSelectedIds(newSelected);
         }
-        setSelectedIds(newSelected);
+    };
+
+    // Clear selection
+    const clearSelection = () => {
+        setSelectAllMode(false);
+        setSelectedIds(new Set());
+        setExcludedIds(new Set());
+    };
+
+    // Get contact IDs for bulk operation
+    const getSelectedContactIds = async (): Promise<string[]> => {
+        if (selectAllMode) {
+            return await fetchAllContactIds();
+        }
+        return Array.from(selectedIds);
     };
 
     const handleBulkAddTags = async () => {
-        if (selectedIds.size === 0 || selectedTagIds.size === 0) return;
+        if (getSelectionCount() === 0 || selectedTagIds.size === 0) return;
 
         setActionLoading(true);
         try {
+            const contactIds = await getSelectedContactIds();
+
             await fetch(`/api/pages/${selectedPageId}/contacts/bulk-add-tags`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    contactIds: Array.from(selectedIds),
+                    contactIds,
                     tagIds: Array.from(selectedTagIds)
                 })
             });
 
             setShowAddTagsModal(false);
             setSelectedTagIds(new Set());
+            clearSelection();
             await fetchContacts();
         } catch (error) {
             console.error('Error adding tags:', error);
@@ -166,21 +274,24 @@ export default function ContactsPage() {
     };
 
     const handleBulkRemoveTags = async () => {
-        if (selectedIds.size === 0 || selectedTagIds.size === 0) return;
+        if (getSelectionCount() === 0 || selectedTagIds.size === 0) return;
 
         setActionLoading(true);
         try {
+            const contactIds = await getSelectedContactIds();
+
             await fetch(`/api/pages/${selectedPageId}/contacts/bulk-remove-tags`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    contactIds: Array.from(selectedIds),
+                    contactIds,
                     tagIds: Array.from(selectedTagIds)
                 })
             });
 
             setShowRemoveTagsModal(false);
             setSelectedTagIds(new Set());
+            clearSelection();
             await fetchContacts();
         } catch (error) {
             console.error('Error removing tags:', error);
@@ -190,23 +301,25 @@ export default function ContactsPage() {
     };
 
     const handleBulkMessage = async () => {
-        if (selectedIds.size === 0 || !messageText.trim()) return;
+        if (getSelectionCount() === 0 || !messageText.trim()) return;
 
         setActionLoading(true);
         try {
+            const contactIds = await getSelectedContactIds();
+
             await fetch('/api/facebook/messages/send', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     pageId: selectedPageId,
-                    contactIds: Array.from(selectedIds),
+                    contactIds,
                     messageText: messageText.trim()
                 })
             });
 
             setShowMessageModal(false);
             setMessageText('');
-            setSelectedIds(new Set());
+            clearSelection();
         } catch (error) {
             console.error('Error sending messages:', error);
         } finally {
@@ -215,20 +328,20 @@ export default function ContactsPage() {
     };
 
     const handleBulkDelete = async () => {
-        if (selectedIds.size === 0) return;
+        if (getSelectionCount() === 0) return;
 
         setActionLoading(true);
         try {
+            const contactIds = await getSelectedContactIds();
+
             await fetch(`/api/pages/${selectedPageId}/contacts/bulk`, {
                 method: 'DELETE',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contactIds: Array.from(selectedIds)
-                })
+                body: JSON.stringify({ contactIds })
             });
 
             setShowDeleteModal(false);
-            setSelectedIds(new Set());
+            clearSelection();
             await fetchContacts();
         } catch (error) {
             console.error('Error deleting contacts:', error);
@@ -247,6 +360,9 @@ export default function ContactsPage() {
         setSelectedTagIds(newSelected);
     };
 
+    // Check if all on current page are selected
+    const allOnPageSelected = contacts.length > 0 && contacts.every(c => isSelected(c.id));
+
     return (
         <div className="page-enter">
             {/* Header */}
@@ -264,7 +380,7 @@ export default function ContactsPage() {
                         onChange={(e) => {
                             setSelectedPageId(e.target.value);
                             setPage(1);
-                            setSelectedIds(new Set());
+                            clearSelection();
                         }}
                         className="select py-2 px-4"
                     >
@@ -299,6 +415,7 @@ export default function ContactsPage() {
                             onChange={(e) => {
                                 setSearch(e.target.value);
                                 setPage(1);
+                                clearSelection();
                             }}
                             className="input pl-10"
                         />
@@ -312,6 +429,7 @@ export default function ContactsPage() {
                             onChange={(e) => {
                                 setSelectedTagFilter(e.target.value);
                                 setPage(1);
+                                clearSelection();
                             }}
                             className="select py-2 px-3 w-auto"
                         >
@@ -325,11 +443,23 @@ export default function ContactsPage() {
                     </div>
 
                     {/* Bulk Actions */}
-                    {selectedIds.size > 0 && (
+                    {getSelectionCount() > 0 && (
                         <div className="flex items-center gap-2 border-l border-[#2a2a3a] pl-4">
                             <span className="text-sm text-gray-400">
-                                {selectedIds.size} selected
+                                {selectAllMode ? (
+                                    <span className="text-indigo-400 font-medium">
+                                        All {getSelectionCount()} contacts selected
+                                    </span>
+                                ) : (
+                                    `${getSelectionCount()} selected`
+                                )}
                             </span>
+                            <button
+                                onClick={clearSelection}
+                                className="btn btn-ghost py-1 px-2 text-xs"
+                            >
+                                Clear
+                            </button>
                             <button
                                 onClick={() => setShowAddTagsModal(true)}
                                 className="btn btn-secondary py-1.5 px-3 text-sm"
@@ -363,6 +493,30 @@ export default function ContactsPage() {
                 </div>
             </div>
 
+            {/* Select All Banner */}
+            {selectedIds.size > 0 && !selectAllMode && total > contacts.length && (
+                <div className="card p-3 mb-4 bg-indigo-600/10 border-indigo-500/30 flex items-center justify-between">
+                    <span className="text-sm text-gray-300">
+                        {selectedIds.size} contacts on this page selected.
+                    </span>
+                    <button
+                        onClick={handleSelectAllAcrossPages}
+                        className="btn btn-primary py-1.5 px-4 text-sm"
+                    >
+                        <CheckSquare className="w-4 h-4" />
+                        Select all {total} contacts
+                    </button>
+                </div>
+            )}
+
+            {selectAllMode && excludedIds.size > 0 && (
+                <div className="card p-3 mb-4 bg-yellow-600/10 border-yellow-500/30">
+                    <span className="text-sm text-gray-300">
+                        All contacts selected except {excludedIds.size} that you unchecked.
+                    </span>
+                </div>
+            )}
+
             {/* Table */}
             <div className="table-container">
                 <table className="table">
@@ -371,8 +525,8 @@ export default function ContactsPage() {
                             <th className="w-12">
                                 <input
                                     type="checkbox"
-                                    checked={contacts.length > 0 && selectedIds.size === contacts.length}
-                                    onChange={handleSelectAll}
+                                    checked={allOnPageSelected}
+                                    onChange={handleSelectAllOnPage}
                                     className="checkbox"
                                 />
                             </th>
@@ -402,11 +556,11 @@ export default function ContactsPage() {
                             </tr>
                         ) : (
                             contacts.map((contact) => (
-                                <tr key={contact.id}>
+                                <tr key={contact.id} className={isSelected(contact.id) ? 'bg-indigo-600/5' : ''}>
                                     <td>
                                         <input
                                             type="checkbox"
-                                            checked={selectedIds.has(contact.id)}
+                                            checked={isSelected(contact.id)}
                                             onChange={() => handleSelect(contact.id)}
                                             className="checkbox"
                                         />
@@ -489,7 +643,7 @@ export default function ContactsPage() {
                 title="Add Tags to Contacts"
             >
                 <p className="text-gray-400 mb-4">
-                    Select tags to add to {selectedIds.size} contact(s).
+                    Select tags to add to {getSelectionCount()} contact(s).
                 </p>
                 <div className="space-y-2 max-h-64 overflow-y-auto mb-6">
                     {tags.map((tag) => (
@@ -497,8 +651,8 @@ export default function ContactsPage() {
                             key={tag.id}
                             onClick={() => toggleTagSelection(tag.id)}
                             className={`w-full flex items-center justify-between p-3 rounded-lg transition-colors ${selectedTagIds.has(tag.id)
-                                    ? 'bg-indigo-600/20 border border-indigo-500'
-                                    : 'bg-[#1a1a24] hover:bg-[#22222e]'
+                                ? 'bg-indigo-600/20 border border-indigo-500'
+                                : 'bg-[#1a1a24] hover:bg-[#22222e]'
                                 }`}
                         >
                             <span className="flex items-center gap-2">
@@ -544,7 +698,7 @@ export default function ContactsPage() {
                 title="Remove Tags from Contacts"
             >
                 <p className="text-gray-400 mb-4">
-                    Select tags to remove from {selectedIds.size} contact(s).
+                    Select tags to remove from {getSelectionCount()} contact(s).
                 </p>
                 <div className="space-y-2 max-h-64 overflow-y-auto mb-6">
                     {tags.map((tag) => (
@@ -552,8 +706,8 @@ export default function ContactsPage() {
                             key={tag.id}
                             onClick={() => toggleTagSelection(tag.id)}
                             className={`w-full flex items-center justify-between p-3 rounded-lg transition-colors ${selectedTagIds.has(tag.id)
-                                    ? 'bg-red-600/20 border border-red-500'
-                                    : 'bg-[#1a1a24] hover:bg-[#22222e]'
+                                ? 'bg-red-600/20 border border-red-500'
+                                : 'bg-[#1a1a24] hover:bg-[#22222e]'
                                 }`}
                         >
                             <span className="flex items-center gap-2">
@@ -600,7 +754,7 @@ export default function ContactsPage() {
                 size="lg"
             >
                 <p className="text-gray-400 mb-4">
-                    Send a message to {selectedIds.size} contact(s).
+                    Send a message to {getSelectionCount()} contact(s).
                 </p>
                 <textarea
                     value={messageText}
@@ -636,7 +790,7 @@ export default function ContactsPage() {
                 title="Delete Contacts"
             >
                 <p className="text-gray-400 mb-6">
-                    Are you sure you want to delete {selectedIds.size} contact(s)? This action cannot be undone.
+                    Are you sure you want to delete {getSelectionCount()} contact(s)? This action cannot be undone.
                     If these contacts message your page again, they will be recreated.
                 </p>
                 <div className="flex justify-end gap-3">

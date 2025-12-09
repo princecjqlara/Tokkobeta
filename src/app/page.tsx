@@ -2,18 +2,57 @@
 
 import { useSession, signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
-import { Facebook, MessageCircle, Users, Tag, Zap, Shield, Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Facebook, MessageCircle, Users, Tag, Zap, Shield, Sparkles, Loader2 } from 'lucide-react';
 
 export default function HomePage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (status === 'authenticated') {
       router.push('/dashboard');
     }
   }, [status, router]);
+
+  // Handle popup sign in
+  const handleFacebookLogin = async () => {
+    setIsLoading(true);
+
+    // Open popup for authentication
+    const width = 600;
+    const height = 700;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+
+    const popup = window.open(
+      '/api/auth/signin/facebook?callbackUrl=/dashboard',
+      'facebook-login',
+      `width=${width},height=${height},left=${left},top=${top},popup=true`
+    );
+
+    // Check if popup was blocked
+    if (!popup) {
+      // Fallback to redirect if popup blocked
+      signIn('facebook', { callbackUrl: '/dashboard' });
+      return;
+    }
+
+    // Poll to check if popup closed and user authenticated
+    const checkAuth = setInterval(async () => {
+      try {
+        if (popup.closed) {
+          clearInterval(checkAuth);
+          setIsLoading(false);
+          // Refresh the page to check authentication
+          window.location.reload();
+        }
+      } catch {
+        // Popup might be on different origin, just wait
+      }
+    }, 500);
+  };
 
   if (status === 'loading') {
     return (
@@ -54,13 +93,23 @@ export default function HomePage() {
               All in one powerful, easy-to-use dashboard.
             </p>
 
-            {/* CTA Button */}
+            {/* CTA Button - Now opens popup */}
             <button
-              onClick={() => signIn('facebook', { callbackUrl: '/dashboard' })}
-              className="btn bg-[#1877F2] hover:bg-[#166FE5] text-white font-semibold px-8 py-4 text-lg rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-lg shadow-blue-500/30 flex items-center gap-3 mx-auto"
+              onClick={handleFacebookLogin}
+              disabled={isLoading}
+              className="btn bg-[#1877F2] hover:bg-[#166FE5] text-white font-semibold px-8 py-4 text-lg rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-lg shadow-blue-500/30 flex items-center gap-3 mx-auto disabled:opacity-70 disabled:cursor-not-allowed disabled:transform-none"
             >
-              <Facebook className="w-6 h-6" />
-              Get Started with Facebook
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  <Facebook className="w-6 h-6" />
+                  Get Started with Facebook
+                </>
+              )}
             </button>
 
             <p className="text-sm text-gray-500 mt-4">

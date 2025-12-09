@@ -83,7 +83,37 @@ export default function ConnectPage() {
     };
 
     const handleReauthorize = () => {
-        signIn('facebook', { callbackUrl: '/dashboard/connect' });
+        // Open popup for authentication
+        const width = 600;
+        const height = 700;
+        const left = window.screenX + (window.outerWidth - width) / 2;
+        const top = window.screenY + (window.outerHeight - height) / 2;
+
+        const popup = window.open(
+            '/api/auth/signin/facebook?callbackUrl=/dashboard/connect',
+            'facebook-login',
+            `width=${width},height=${height},left=${left},top=${top},popup=true`
+        );
+
+        // Check if popup was blocked
+        if (!popup) {
+            // Fallback to redirect if popup blocked
+            signIn('facebook', { callbackUrl: '/dashboard/connect' });
+            return;
+        }
+
+        // Poll to check if popup closed
+        const checkAuth = setInterval(() => {
+            try {
+                if (popup.closed) {
+                    clearInterval(checkAuth);
+                    // Refresh the page to check for new pages
+                    window.location.reload();
+                }
+            } catch {
+                // Popup might be on different origin, just wait
+            }
+        }, 500);
     };
 
     if (!session?.accessToken) {
